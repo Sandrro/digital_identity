@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -21,9 +22,16 @@ class VKPost:
 
 
 def _normalize_group_id(group: str) -> str:
-    if group.startswith("https://"):
-        return group.rstrip("/").split("/")[-1]
-    return group.lstrip("@")
+    raw = group.strip()
+    if raw.startswith(("https://", "http://")):
+        parsed = urlparse(raw)
+        path = parsed.path.rstrip("/")
+        raw = path.split("/")[-1] if path else ""
+    if "vk.com/" in raw:
+        raw = raw.split("vk.com/")[-1]
+    raw = raw.lstrip("@")
+    raw = raw.split("?")[0].split("#")[0]
+    return raw
 
 
 class VKGroupParser:

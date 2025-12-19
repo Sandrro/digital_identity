@@ -42,7 +42,10 @@ def fetch_fontanka_article(url: str, timeout: int = 20) -> FontankaArticle:
     title = title_tag.get_text(strip=True) if title_tag else ""
 
     time_tag = soup.select_one("time")
-    published_at = time_tag.get("datetime") if time_tag else None
+    if time_tag:
+        published_at = time_tag.get("datetime") or time_tag.get_text(strip=True)
+    else:
+        published_at = None
 
     body = (
         soup.select_one('[itemprop="articleBody"]')

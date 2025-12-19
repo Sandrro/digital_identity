@@ -13,7 +13,10 @@ from flair.data import Sentence
 from flair.models import SequenceTagger
 
 
-PHOTON_URL = "https://photon.komoot.io/api"
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REQUEST_SLEEP_SEC = 1.0
+NOMINATIM_ERROR_SLEEP_SEC = 5.0
+NOMINATIM_MAX_RETRIES = 3
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ class GeocodeResult:
 
 
 class Geocoder:
-    """Геокодер входящих текстовых сообщений через Photon с NER‑парсингом."""
+    """Геокодер входящих текстовых сообщений через Nominatim с NER‑парсингом."""
 
     def __init__(self, bbox: str | None = None) -> None:
         self.bbox = bbox
@@ -86,17 +89,51 @@ class Geocoder:
                 result["street_name"] = " ".join(str_tokens)
         return result
 
-    def fetch_photon(
-        self, query: str, bbox: str | None, layers: List[str], limit: int
+    def fetch_nominatim(
+        self, query: str, bbox: str | None, limit: int
     ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {"q": query, "layer": layers, "limit": limit}
+        params: Dict[str, Any] = {
+            "q": query,
+            "format": "json",
+            "addressdetails": 1,
+            "limit": limit,
+        }
         if bbox:
-            params["bbox"] = bbox
-        resp = requests.get(PHOTON_URL, params=params, timeout=30)
-        resp.raise_for_status()
-        features = resp.json().get("features", [])
-        time.sleep(1)
-        return features
+            minx, miny, maxx, maxy = map(float, bbox.split(","))
+            params["viewbox"] = f"{minx},{maxy},{maxx},{miny}"
+            params["bounded"] = 1
+
+        headers = {"User-Agent": "digital-identity-geocoder/1.0"}
+        last_exc: Exception | None = None
+        for attempt in range(1, NOMINATIM_MAX_RETRIES + 1):
+            try:
+                resp = requests.get(
+                    NOMINATIM_URL, params=params, headers=headers, timeout=30
+                )
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    raise requests.HTTPError(
+                        f"Nominatim error status {resp.status_code}",
+                        response=resp,
+                    )
+                resp.raise_for_status()
+                results = resp.json()
+                time.sleep(NOMINATIM_REQUEST_SLEEP_SEC)
+                return results
+            except (requests.RequestException, ValueError) as exc:
+                last_exc = exc
+                logger.warning(
+                    "Nominatim request failed on attempt %s/%s: %s",
+                    attempt,
+                    NOMINATIM_MAX_RETRIES,
+                    exc,
+                )
+                if attempt < NOMINATIM_MAX_RETRIES:
+                    time.sleep(NOMINATIM_ERROR_SLEEP_SEC)
+                    continue
+                break
+        if last_exc:
+            raise last_exc
+        return []
 
     def process_text(self, text: str) -> GeocodeResult:
         texts = self.extract_address_texts(text)
@@ -107,36 +144,31 @@ class Geocoder:
         if not street:
             return GeocodeResult(None, None, None, text)
 
-        layers = ["house"] if house else ["street"]
         query = f"{house}, {street}" if house else street
 
-        feats = self.fetch_photon(query, self.bbox, layers, limit=1)
+        feats = self.fetch_nominatim(query, self.bbox, limit=1)
 
         if not feats:
             normalized = self.normalize_street_name(street)
             if normalized.lower() != street.lower():
                 query = f"{house}, {normalized}" if house else normalized
-                feats = self.fetch_photon(query, self.bbox, layers, limit=1)
+                feats = self.fetch_nominatim(query, self.bbox, limit=1)
 
         if not feats:
             return GeocodeResult(None, None, None, text)
 
         feat = feats[0]
-        props = feat.get("properties", {})
-        geom = feat.get("geometry", {})
-
         point = None
-        if geom.get("type") == "Point":
-            lon, lat = geom["coordinates"]
-            point = Point(lon, lat)
+        if "lon" in feat and "lat" in feat:
+            point = Point(float(feat["lon"]), float(feat["lat"]))
 
-        name = props.get("name") or ", ".join(
-            filter(
-                None,
-                [props.get("street", "").strip(), props.get("housenumber", "").strip()],
-            )
-        )
-        osm_id = props.get("osm_id")
+        address = feat.get("address", {})
+        name_parts = [
+            address.get("road", "").strip(),
+            address.get("house_number", "").strip(),
+        ]
+        name = ", ".join(filter(None, name_parts)) or feat.get("display_name")
+        osm_id = feat.get("osm_id")
 
         return GeocodeResult(point, name or None, osm_id, text)
 
@@ -252,12 +284,12 @@ def geocode_texts(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Extract toponyms with NER, geocode them via Photon, and save map/GeoJSON."
+        description="Extract toponyms with NER, geocode them via Nominatim, and save map/GeoJSON."
     )
     parser.add_argument("input", help="Path to a text file with one message per line.")
     parser.add_argument(
         "--bbox",
-        help="Bounding box as 'minx,miny,maxx,maxy' to restrict Photon results.",
+        help="Bounding box as 'minx,miny,maxx,maxy' to restrict Nominatim results.",
     )
     parser.add_argument(
         "--bbox-name",

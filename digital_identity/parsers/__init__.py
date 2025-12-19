@@ -6,10 +6,12 @@ _parsers = import_module("parsers")
 
 fetch_fontanka_article = _parsers.fetch_fontanka_article
 fetch_yandex_reviews = _parsers.fetch_yandex_reviews
+parse_websites = _parsers.parse_websites
 VKGroupParser = _parsers.VKGroupParser
 
 __all__ = [
     "fetch_fontanka_article",
     "fetch_yandex_reviews",
     "VKGroupParser",
+    "parse_websites",
 ]

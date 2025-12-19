@@ -4,7 +4,7 @@
 
 Открыть блокнот в Colab: [text_parsing_colab.ipynb](https://colab.research.google.com/github/Sandrro/digital_identity/blob/main/notebooks/text_parsing_colab.ipynb)
 
-> Замените `OWNER` на имя пользователя/организации в GitHub, если репозиторий размещён в другом аккаунте.
+> Замените `Sandrro` на имя пользователя/организации в GitHub, если репозиторий размещён в другом аккаунте.
 
 ## Скрипты
 

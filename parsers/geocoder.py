@@ -25,7 +25,9 @@ class ModelsInit:
     def init_models(self) -> None:
         ner_model_name = "Geor111y/flair-ner-addresses-extractor"
         print(f"Launching NER model {ner_model_name} with Flair SequenceTagger")
-        self._ner_model = SequenceTagger.load(ner_model_name)
+        with tqdm(total=1, desc="Loading NER model", unit="model") as progress:
+            self._ner_model = SequenceTagger.load(ner_model_name)
+            progress.update(1)
 
 
 models_initialization = ModelsInit()

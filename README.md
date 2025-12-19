@@ -11,3 +11,4 @@
 - `parsers/website_parser.py` — парсинг статических веб-страниц.
 - `parsers/yandex_reviews_parser.py` — парсинг отзывов Яндекса.
 - `parsers/vk_group_parser.py` — парсинг постов групп ВК (адаптация VKParser для актуального Python).
+- `parsers/geocoder.py` — извлечение адресов через NER и геокодирование через Photon (при загрузке модели показывается прогресс).

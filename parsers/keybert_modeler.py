@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple
+from typing import Callable, Iterable, List, Sequence, Tuple
 
 from keybert import KeyBERT
+from tqdm.auto import tqdm
 
 KeywordResult = List[Tuple[str, float]]
 
@@ -25,10 +26,18 @@ def extract_keywords(
     diversity: float = 0.5,
     use_maxsum: bool = False,
     nr_candidates: int = 20,
+    show_progress: bool = False,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> KeyBERTResult:
     model = KeyBERT(embedding_model)
     keywords = []
-    for text in texts:
+    texts_list = list(texts)
+    iterator = (
+        tqdm(texts_list, total=len(texts_list), desc="KeyBERT")
+        if show_progress
+        else texts_list
+    )
+    for idx, text in enumerate(iterator, start=1):
         if not text:
             keywords.append([])
             continue
@@ -43,6 +52,8 @@ def extract_keywords(
             nr_candidates=nr_candidates,
         )
         keywords.append(list(extracted))
+        if progress_callback:
+            progress_callback(idx, len(texts_list))
     return KeyBERTResult(model=model, keywords=keywords)
 
 

@@ -5,6 +5,7 @@ from typing import Iterable, List
 
 from bertopic import BERTopic
 from bertopic.vectorizers import ClassTfidfTransformer
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.cluster import KMeans
 
 try:
@@ -27,6 +28,7 @@ def train_topic_model(
     min_topic_size: int = 10,
     nr_topics: int | None = None,
     embedding_model: str | None = None,
+    stop_words: str | list[str] | None = None,
     cluster_method: str = "hdbscan",
     n_clusters: int | None = None,
     min_samples: int | None = None,
@@ -34,9 +36,7 @@ def train_topic_model(
     calculate_probabilities: bool = False,
     verbose: bool = True,
 ) -> TopicModelResult:
-    vectorizer_model = ClassTfidfTransformer(
-        reduce_frequent_words=reduce_frequent_words
-    )
+    vectorizer_model = CountVectorizer(stop_words=stop_words)
     cluster_method = cluster_method.lower()
     if cluster_method == "kmeans":
         n_clusters = n_clusters or max(2, min_topic_size)
@@ -60,7 +60,8 @@ def train_topic_model(
         nr_topics=nr_topics,
         embedding_model=embedding_model,
         hdbscan_model=hdbscan_model,
-        ctfidf_model=vectorizer_model,
+        vectorizer_model=vectorizer_model,
+        ctfidf_model=ClassTfidfTransformer(reduce_frequent_words=reduce_frequent_words),
         calculate_probabilities=calculate_probabilities,
         verbose=verbose,
     )

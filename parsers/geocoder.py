@@ -199,9 +199,27 @@ def bbox_from_area_name(area_name: str) -> str:
     try:
         import osmnx as ox
     except ImportError as exc:
-        raise RuntimeError(
-            "osmnx is required to resolve bbox by area name. Install osmnx first."
-        ) from exc
+        logger.info("osmnx is unavailable, falling back to Nominatim for bbox lookup.")
+        try:
+            response = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": area_name, "format": "json", "limit": 1},
+                headers={"User-Agent": "digital-identity-geocoder/1.0"},
+                timeout=30,
+            )
+            response.raise_for_status()
+        except requests.RequestException as request_exc:
+            raise RuntimeError(
+                "Failed to resolve bbox via Nominatim. Install osmnx or check network access."
+            ) from request_exc
+        data = response.json()
+        if not data:
+            raise ValueError(f"Territory not found: {area_name}")
+        bbox = data[0].get("boundingbox")
+        if not bbox or len(bbox) != 4:
+            raise RuntimeError(f"Unexpected bbox response for: {area_name}")
+        south, north, west, east = map(float, bbox)
+        return ",".join(f"{value:.6f}" for value in (west, south, east, north))
 
     gdf = ox.geocode_to_gdf(area_name)
     if gdf.empty:

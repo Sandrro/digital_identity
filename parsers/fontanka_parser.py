@@ -35,8 +35,10 @@ def fetch_fontanka_article(url: str, timeout: int = 20) -> FontankaArticle:
     }
     response = requests.get(url, headers=headers, timeout=timeout)
     response.raise_for_status()
+    if not response.encoding:
+        response.encoding = response.apparent_encoding or "utf-8"
 
-    soup = BeautifulSoup(response.text, "lxml")
+    soup = BeautifulSoup(response.content, "lxml")
 
     title_tag = soup.select_one("h1")
     title = title_tag.get_text(strip=True) if title_tag else ""
@@ -53,8 +55,12 @@ def fetch_fontanka_article(url: str, timeout: int = 20) -> FontankaArticle:
         or soup.select_one(".article__body")
     )
     if body:
-        paragraphs = [p.get_text(" ", strip=True) for p in body.find_all("p")]
-        text = "\n".join([p for p in paragraphs if p])
+        blocks = body.find_all(["p", "h2", "h3", "li"], recursive=True)
+        if blocks:
+            paragraphs = [block.get_text(" ", strip=True) for block in blocks]
+            text = "\n".join([p for p in paragraphs if p])
+        else:
+            text = body.get_text("\n", strip=True)
     else:
         text = ""
 

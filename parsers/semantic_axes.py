@@ -106,10 +106,12 @@ def build_semantic_map(
     axis_y: str,
     title: str = "",
 ) -> px.scatter:
+    midpoint = 5.5
+    half_range = 4.5
     data = pd.DataFrame(
         {
-            axis_x: scores[axis_x],
-            axis_y: scores[axis_y],
+            axis_x: scores[axis_x] - midpoint,
+            axis_y: scores[axis_y] - midpoint,
             "text": texts,
         }
     )
@@ -121,8 +123,8 @@ def build_semantic_map(
         title=title or "Семантическая карта",
     )
     fig.update_layout(
-        xaxis=dict(range=[1, 10]),
-        yaxis=dict(range=[1, 10]),
+        xaxis=dict(range=[-half_range, half_range], zeroline=True),
+        yaxis=dict(range=[-half_range, half_range], zeroline=True),
     )
     return fig
 

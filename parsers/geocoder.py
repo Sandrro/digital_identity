@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 
 import requests
-from loguru import logger
 from pymorphy3 import MorphAnalyzer
 from shapely.geometry import Point, mapping
 from tqdm.asyncio import tqdm
@@ -23,7 +22,7 @@ class ModelsInit:
     async def init_models(self) -> None:
         loop = asyncio.get_event_loop()
         ner_model_name = "Geor111y/flair-ner-addresses-extractor"
-        logger.info(f"Launching NER model {ner_model_name} with Flair SequenceTagger")
+        print(f"Launching NER model {ner_model_name} with Flair SequenceTagger")
         self._ner_model = await loop.run_in_executor(
             None, lambda: SequenceTagger.load(ner_model_name)
         )

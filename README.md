@@ -8,6 +8,6 @@
 
 ## Скрипты
 
-- `parsers/fontanka_parser.py` — парсинг статей Fontanka.ru.
+- `parsers/website_parser.py` — парсинг статических веб-страниц.
 - `parsers/yandex_reviews_parser.py` — парсинг отзывов Яндекса.
 - `parsers/vk_group_parser.py` — парсинг постов групп ВК (адаптация VKParser для актуального Python).

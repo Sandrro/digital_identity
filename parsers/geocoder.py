@@ -1,12 +1,13 @@
 import argparse
-import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
 
 import requests
 from pymorphy3 import MorphAnalyzer
 from shapely.geometry import Point, mapping
-from tqdm.asyncio import tqdm
+from tqdm import tqdm
 
 from flair.data import Sentence
 from flair.models import SequenceTagger
@@ -14,18 +15,17 @@ from flair.models import SequenceTagger
 
 PHOTON_URL = "https://photon.komoot.io/api"
 
+logger = logging.getLogger(__name__)
+
 
 class ModelsInit:
     def __init__(self) -> None:
         self._ner_model: SequenceTagger | None = None
 
-    async def init_models(self) -> None:
-        loop = asyncio.get_event_loop()
+    def init_models(self) -> None:
         ner_model_name = "Geor111y/flair-ner-addresses-extractor"
         print(f"Launching NER model {ner_model_name} with Flair SequenceTagger")
-        self._ner_model = await loop.run_in_executor(
-            None, lambda: SequenceTagger.load(ner_model_name)
-        )
+        self._ner_model = SequenceTagger.load(ner_model_name)
 
 
 models_initialization = ModelsInit()
@@ -44,7 +44,6 @@ class Geocoder:
 
     def __init__(self, bbox: str | None = None) -> None:
         self.bbox = bbox
-        self._rate_limit = asyncio.Semaphore(1)
         self.morph = MorphAnalyzer()
 
     def normalize_street_name(self, raw: str) -> str:
@@ -85,23 +84,19 @@ class Geocoder:
                 result["street_name"] = " ".join(str_tokens)
         return result
 
-    async def fetch_photon(
+    def fetch_photon(
         self, query: str, bbox: str | None, layers: List[str], limit: int
     ) -> List[Dict[str, Any]]:
-        async with self._rate_limit:
-            def _request() -> List[Dict[str, Any]]:
-                params: Dict[str, Any] = {"q": query, "layer": layers, "limit": limit}
-                if bbox:
-                    params["bbox"] = bbox
-                resp = requests.get(PHOTON_URL, params=params, timeout=30)
-                resp.raise_for_status()
-                return resp.json().get("features", [])
+        params: Dict[str, Any] = {"q": query, "layer": layers, "limit": limit}
+        if bbox:
+            params["bbox"] = bbox
+        resp = requests.get(PHOTON_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        features = resp.json().get("features", [])
+        time.sleep(1)
+        return features
 
-            features = await asyncio.to_thread(_request)
-            await asyncio.sleep(1)
-            return features
-
-    async def process_text(self, text: str) -> GeocodeResult:
+    def process_text(self, text: str) -> GeocodeResult:
         texts = self.extract_address_texts(text)
         addr = self.parse_address_components(texts)
         street = addr.get("street_name", "").strip()
@@ -113,13 +108,13 @@ class Geocoder:
         layers = ["house"] if house else ["street"]
         query = f"{house}, {street}" if house else street
 
-        feats = await self.fetch_photon(query, self.bbox, layers, limit=1)
+        feats = self.fetch_photon(query, self.bbox, layers, limit=1)
 
         if not feats:
             normalized = self.normalize_street_name(street)
             if normalized.lower() != street.lower():
                 query = f"{house}, {normalized}" if house else normalized
-                feats = await self.fetch_photon(query, self.bbox, layers, limit=1)
+                feats = self.fetch_photon(query, self.bbox, layers, limit=1)
 
         if not feats:
             return GeocodeResult(None, None, None, text)
@@ -198,8 +193,27 @@ def save_map(path: str, results: List[GeocodeResult]) -> None:
     m.save(path)
 
 
-async def geocode_texts(texts: List[str], bbox: str | None) -> List[GeocodeResult]:
-    await models_initialization.init_models()
+def bbox_from_area_name(area_name: str) -> str:
+    try:
+        import osmnx as ox
+    except ImportError as exc:
+        raise RuntimeError(
+            "osmnx is required to resolve bbox by area name. Install osmnx first."
+        ) from exc
+
+    gdf = ox.geocode_to_gdf(area_name)
+    if gdf.empty:
+        raise ValueError(f"Territory not found: {area_name}")
+    minx, miny, maxx, maxy = gdf.total_bounds
+    return ",".join(f"{value:.6f}" for value in (minx, miny, maxx, maxy))
+
+
+def geocode_texts(
+    texts: List[str], bbox: str | None, bbox_name: str | None = None
+) -> List[GeocodeResult]:
+    if not bbox and bbox_name:
+        bbox = bbox_from_area_name(bbox_name)
+    models_initialization.init_models()
     geocoder = Geocoder(bbox=bbox)
     results: List[GeocodeResult] = []
     for text in tqdm(texts, total=len(texts), desc="Geocoding"):
@@ -208,7 +222,7 @@ async def geocode_texts(texts: List[str], bbox: str | None) -> List[GeocodeResul
             results.append(GeocodeResult(None, None, None, text))
             continue
         try:
-            result = await geocoder.process_text(clean)
+            result = geocoder.process_text(clean)
         except Exception as exc:
             logger.warning(f"Failed to geocode text: {clean}. Error: {exc}")
             result = GeocodeResult(None, None, None, clean)
@@ -224,6 +238,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--bbox",
         help="Bounding box as 'minx,miny,maxx,maxy' to restrict Photon results.",
+    )
+    parser.add_argument(
+        "--bbox-name",
+        help="Resolve bbox by territory name using OpenStreetMap (requires osmnx).",
     )
     parser.add_argument(
         "--geojson",
@@ -249,7 +267,7 @@ def main() -> None:
     texts = load_texts(args.input)
     logger.info(f"Loaded {len(texts)} texts for geocoding")
 
-    results = asyncio.run(geocode_texts(texts, bbox=args.bbox))
+    results = geocode_texts(texts, bbox=args.bbox, bbox_name=args.bbox_name)
     geojson_data = build_geojson(results)
     save_geojson(args.geojson, geojson_data)
     logger.info(f"Saved GeoJSON to {args.geojson}")

@@ -47,6 +47,7 @@ def score_texts_on_axes(
     *,
     model_name: str = DEFAULT_MODEL_NAME,
     batch_size: int = 32,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     texts_list = [text if text is not None else "" for text in texts]
     if not axes:
@@ -54,16 +55,25 @@ def score_texts_on_axes(
 
     model = SentenceTransformer(model_name)
     text_embeddings = model.encode(
-        texts_list, normalize_embeddings=True, batch_size=batch_size
+        texts_list,
+        normalize_embeddings=True,
+        batch_size=batch_size,
+        show_progress_bar=show_progress,
     )
 
     left_texts = [" ".join(axis.left_terms) for axis in axes]
     right_texts = [" ".join(axis.right_terms) for axis in axes]
     left_embeddings = model.encode(
-        left_texts, normalize_embeddings=True, batch_size=batch_size
+        left_texts,
+        normalize_embeddings=True,
+        batch_size=batch_size,
+        show_progress_bar=show_progress,
     )
     right_embeddings = model.encode(
-        right_texts, normalize_embeddings=True, batch_size=batch_size
+        right_texts,
+        normalize_embeddings=True,
+        batch_size=batch_size,
+        show_progress_bar=show_progress,
     )
 
     similarity_left = np.matmul(text_embeddings, left_embeddings.T)

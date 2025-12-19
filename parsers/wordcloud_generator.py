@@ -176,13 +176,28 @@ def parse_stop_words(raw_value: str | Sequence[str] | None) -> set[str]:
         raw_value = raw_value.strip()
         if not raw_value:
             return set()
-        lowered = raw_value.lower()
-        if lowered == "english":
-            return set(STOPWORDS)
-        if lowered == "russian":
-            return set(RUSSIAN_STOPWORDS)
-        return {item.strip().lower() for item in raw_value.split(",") if item.strip()}
-    return {item.strip().lower() for item in raw_value if str(item).strip()}
+        tokens = [item.strip().lower() for item in raw_value.split(",") if item.strip()]
+        stop_words: set[str] = set()
+        for token in tokens:
+            if token == "english":
+                stop_words.update(STOPWORDS)
+            elif token == "russian":
+                stop_words.update(RUSSIAN_STOPWORDS)
+            else:
+                stop_words.add(token)
+        return stop_words
+    stop_words = set()
+    for item in raw_value:
+        token = str(item).strip().lower()
+        if not token:
+            continue
+        if token == "english":
+            stop_words.update(STOPWORDS)
+        elif token == "russian":
+            stop_words.update(RUSSIAN_STOPWORDS)
+        else:
+            stop_words.add(token)
+    return stop_words
 
 
 def _clean_texts(texts: Iterable[str], stop_words: set[str]) -> str:

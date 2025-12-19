@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup, Comment
+from tqdm import tqdm
 
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 SPACE_RE = re.compile(r"\s+")
@@ -213,12 +214,19 @@ def parse_websites(
     selector: Optional[str] = None,
     min_chars: int = 400,
     cfg: Optional[FetchConfig] = None,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     cfg = cfg or FetchConfig()
     rows: List[Dict[str, Any]] = []
 
+    urls_list = list(urls)
+    iterator = (
+        tqdm(urls_list, total=len(urls_list), desc="Parsing websites")
+        if show_progress
+        else urls_list
+    )
     with requests.Session() as session:
-        for url in urls:
+        for url in iterator:
             url = (url or "").strip()
             if not url:
                 continue

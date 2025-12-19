@@ -1,7 +1,8 @@
 import logging
-from typing import Iterable, List
+from typing import Callable, Iterable, List
 
 from transformers import pipeline
+from tqdm.auto import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,35 @@ def classify_emotion(text: str) -> str:
     return result[0]["label"]
 
 
-def classify_emotions(texts: Iterable[str]) -> List[str]:
+def classify_emotions(
+    texts: Iterable[str],
+    *,
+    batch_size: int = 32,
+    show_progress: bool = False,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> List[str]:
     model = models_initialization._classification_model
     if model is None:
         raise RuntimeError("Classification model is not initialized. Call init_models() first.")
-    results = model(list(texts))
-    return [item["label"] for item in results]
+    texts_list = list(texts)
+    total = len(texts_list)
+    if not texts_list:
+        return []
+    if not show_progress and progress_callback is None:
+        results = model(texts_list, batch_size=batch_size)
+        return [item["label"] for item in results]
+
+    labels: List[str] = []
+    steps = range(0, total, batch_size)
+    iterator = (
+        tqdm(steps, desc="Emotions", unit="batch")
+        if show_progress
+        else steps
+    )
+    for start in iterator:
+        batch = texts_list[start : start + batch_size]
+        results = model(batch, batch_size=batch_size)
+        labels.extend(item["label"] for item in results)
+        if progress_callback:
+            progress_callback(len(labels), total)
+    return labels

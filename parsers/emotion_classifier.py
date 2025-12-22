@@ -1,8 +1,9 @@
 import logging
 import re
 from collections import Counter, defaultdict
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List
 
+import torch
 from transformers import pipeline
 from tqdm.auto import tqdm
 
@@ -29,7 +30,6 @@ def _token_len(tokenizer, text: str) -> int:
 
 
 def _split_by_token_slices(tokenizer, text: str, max_tokens: int) -> List[str]:
-
     text = text.strip()
     if not text:
         return []
@@ -39,13 +39,14 @@ def _split_by_token_slices(tokenizer, text: str, max_tokens: int) -> List[str]:
 
     slice_size = max(1, max_tokens - 2)
     ids = tokenizer.encode(text, add_special_tokens=False)
+
     chunks: List[str] = []
     for i in range(0, len(ids), slice_size):
         sub = tokenizer.decode(ids[i : i + slice_size], skip_special_tokens=True).strip()
         if sub:
             chunks.append(sub)
 
-    safe_chunks = []
+    safe_chunks: List[str] = []
     for c in chunks:
         if _token_len(tokenizer, c) <= max_tokens:
             safe_chunks.append(c)
@@ -105,7 +106,6 @@ def _chunk_text_by_sentences(tokenizer, text: str, max_tokens: int = MAX_MODEL_T
 def _aggregate_labels(labels: List[str]) -> str:
     if not labels:
         return "neutral"
-
     counts = Counter(labels)
     max_count = max(counts.values())
     candidates = [lbl for lbl, c in counts.items() if c == max_count]
@@ -118,6 +118,41 @@ def _aggregate_labels(labels: List[str]) -> str:
             return p
 
     return sorted(candidates)[0]
+
+
+def _predict_labels_strict(p, texts: List[str], *, max_length: int = MAX_MODEL_TOKENS) -> List[str]:
+
+    tokenizer = getattr(p, "tokenizer", None)
+    mdl = getattr(p, "model", None)
+    if tokenizer is None or mdl is None:
+        raise RuntimeError("Pipeline must have tokenizer and model.")
+
+    device_idx = getattr(p, "device", -1)
+    if device_idx is None or device_idx == -1:
+        device = torch.device("cpu")
+    else:
+        device = torch.device(f"cuda:{int(device_idx)}")
+
+    batch = [("" if t is None else str(t)) for t in texts]
+
+    enc = tokenizer(
+        batch,
+        truncation=True,
+        max_length=max_length,
+        padding=True,
+        return_tensors="pt",
+    )
+    enc = {k: v.to(device) for k, v in enc.items()}
+
+    mdl.eval()
+    with torch.no_grad():
+        out = mdl(**enc)
+        logits = out.logits
+        pred_ids = torch.argmax(logits, dim=-1).detach().cpu().tolist()
+
+    id2label = getattr(mdl.config, "id2label", None) or {}
+    labels = [id2label.get(i, str(i)) for i in pred_ids]
+    return labels
 
 
 class ModelsInit:
@@ -140,7 +175,6 @@ models_initialization = ModelsInit()
 
 
 def classify_emotion(text: str) -> str:
-
     labels = classify_emotions([text], batch_size=32, show_progress=False)
     return labels[0] if labels else "neutral"
 
@@ -152,8 +186,8 @@ def classify_emotions(
     show_progress: bool = False,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> List[str]:
-    model = models_initialization._classification_model
-    if model is None:
+    p = models_initialization._classification_model
+    if p is None:
         raise RuntimeError("Classification model is not initialized. Call init_models() first.")
 
     texts_list = list(texts)
@@ -161,7 +195,7 @@ def classify_emotions(
     if not texts_list:
         return []
 
-    tokenizer = getattr(model, "tokenizer", None)
+    tokenizer = getattr(p, "tokenizer", None)
     if tokenizer is None:
         raise RuntimeError("Pipeline tokenizer is not available; cannot do token-based chunking.")
 
@@ -192,30 +226,16 @@ def classify_emotions(
             if progress_callback:
                 progress_callback(done_texts, total_texts)
 
-    if not show_progress and progress_callback is None:
-        results = model(
-            chunk_texts,
-            batch_size=batch_size,
-            truncation=True,
-            max_length=MAX_MODEL_TOKENS,
-        )
-        for owner_idx, item in zip(owners, results):
-            mark_chunk_result(owner_idx, item["label"])
-        return [_aggregate_labels(labels_by_text[i]) for i in range(total_texts)]
-
     iterator = range(0, len(chunk_texts), batch_size)
     pbar = tqdm(iterator, desc="Emotions", unit="batch") if show_progress else iterator
 
     for start in pbar:
         batch = chunk_texts[start : start + batch_size]
         batch_owners = owners[start : start + batch_size]
-        results = model(
-            batch,
-            batch_size=batch_size,
-            truncation=True,
-            max_length=MAX_MODEL_TOKENS,
-        )
-        for owner_idx, item in zip(batch_owners, results):
-            mark_chunk_result(owner_idx, item["label"])
+
+        batch_labels = _predict_labels_strict(p, batch, max_length=MAX_MODEL_TOKENS)
+
+        for owner_idx, lbl in zip(batch_owners, batch_labels):
+            mark_chunk_result(owner_idx, lbl)
 
     return [_aggregate_labels(labels_by_text[i]) for i in range(total_texts)]

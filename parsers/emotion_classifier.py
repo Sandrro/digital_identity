@@ -1,7 +1,7 @@
 import logging
 import re
 from collections import Counter, defaultdict
-from typing import Callable, Dict, Iterable, List
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Union
 
 import torch
 from transformers import pipeline
@@ -18,6 +18,10 @@ def _normalize_ws(text: str) -> str:
 
 
 def _split_into_sentences(text: str) -> List[str]:
+    """
+    Dependency-free sentence splitting.
+    Good enough for typical RU/EN punctuation.
+    """
     text = text.strip()
     if not text:
         return []
@@ -30,6 +34,10 @@ def _token_len(tokenizer, text: str) -> int:
 
 
 def _split_by_token_slices(tokenizer, text: str, max_tokens: int) -> List[str]:
+    """
+    If a single piece is still > max_tokens, slice by tokens (no special tokens).
+    Guarantees each returned chunk will be <= max_tokens with special tokens added.
+    """
     text = text.strip()
     if not text:
         return []
@@ -56,7 +64,12 @@ def _split_by_token_slices(tokenizer, text: str, max_tokens: int) -> List[str]:
 
 
 def _chunk_text_by_sentences(tokenizer, text: str, max_tokens: int = MAX_MODEL_TOKENS) -> List[str]:
-    text = _normalize_ws(text)
+    """
+    1) Split into sentences
+    2) Pack sentences into chunks not exceeding max_tokens
+    3) If a sentence is too long, slice by tokens
+    """
+    text = _normalize_ws(str(text))
     if not text:
         return []
 
@@ -104,8 +117,13 @@ def _chunk_text_by_sentences(tokenizer, text: str, max_tokens: int = MAX_MODEL_T
 
 
 def _aggregate_labels(labels: List[str]) -> str:
+    """
+    Majority vote. Tie-break: negative > positive > neutral.
+    If none of those present among tied candidates: deterministic by alphabet.
+    """
     if not labels:
         return "neutral"
+
     counts = Counter(labels)
     max_count = max(counts.values())
     candidates = [lbl for lbl, c in counts.items() if c == max_count]
@@ -120,18 +138,49 @@ def _aggregate_labels(labels: List[str]) -> str:
     return sorted(candidates)[0]
 
 
-def _predict_labels_strict(p, texts: List[str], *, max_length: int = MAX_MODEL_TOKENS) -> List[str]:
+def _resolve_pipeline_device(p) -> torch.device:
+    """
+    HuggingFace pipeline may expose device as:
+    - int (e.g. -1, 0, 1)
+    - torch.device
+    - str ('cpu', 'cuda', 'cuda:0')
+    - None
+    We normalize to torch.device.
+    """
+    dev = getattr(p, "device", None)
 
+    if isinstance(dev, torch.device):
+        return dev
+    if dev is None:
+        return torch.device("cpu")
+    if isinstance(dev, str):
+        try:
+            return torch.device(dev)
+        except Exception:
+            return torch.device("cpu")
+
+    if isinstance(dev, int):
+        if dev < 0:
+            return torch.device("cpu")
+        return torch.device(f"cuda:{dev}")
+
+    try:
+        return torch.device(str(dev))
+    except Exception:
+        return torch.device("cpu")
+
+
+def _predict_labels_strict(p, texts: List[str], *, max_length: int = MAX_MODEL_TOKENS) -> List[str]:
+    """
+    Strict max_length guarantee by manual tokenization + direct model forward.
+    This avoids cases where pipeline call doesn't apply truncation as expected.
+    """
     tokenizer = getattr(p, "tokenizer", None)
     mdl = getattr(p, "model", None)
     if tokenizer is None or mdl is None:
         raise RuntimeError("Pipeline must have tokenizer and model.")
 
-    device_idx = getattr(p, "device", -1)
-    if device_idx is None or device_idx == -1:
-        device = torch.device("cpu")
-    else:
-        device = torch.device(f"cuda:{int(device_idx)}")
+    device = _resolve_pipeline_device(p)
 
     batch = [("" if t is None else str(t)) for t in texts]
 
@@ -144,7 +193,9 @@ def _predict_labels_strict(p, texts: List[str], *, max_length: int = MAX_MODEL_T
     )
     enc = {k: v.to(device) for k, v in enc.items()}
 
+    mdl = mdl.to(device)
     mdl.eval()
+
     with torch.no_grad():
         out = mdl(**enc)
         logits = out.logits
@@ -175,6 +226,9 @@ models_initialization = ModelsInit()
 
 
 def classify_emotion(text: str) -> str:
+    """
+    Single-text wrapper (with chunking + collapse).
+    """
     labels = classify_emotions([text], batch_size=32, show_progress=False)
     return labels[0] if labels else "neutral"
 
@@ -204,9 +258,9 @@ def classify_emotions(
     chunks_per_text: List[int] = [0] * total_texts
 
     for i, t in enumerate(texts_list):
-        chunks = _chunk_text_by_sentences(tokenizer, str(t), max_tokens=MAX_MODEL_TOKENS)
+        chunks = _chunk_text_by_sentences(tokenizer, t, max_tokens=MAX_MODEL_TOKENS)
         if not chunks:
-            chunks = [""]
+            chunks = [""] 
         chunks_per_text[i] = len(chunks)
         for c in chunks:
             chunk_texts.append(c)
